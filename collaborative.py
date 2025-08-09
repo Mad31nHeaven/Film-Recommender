@@ -27,6 +27,7 @@ def get_cos_sim(movieId):
         cosine_sims.append(cosine_sim)
 
     return cosine_sims
+# the content and collaborative algorithms, if needed to change do it here
 def return_collab_filt(new_userIds,new_movieIds,new_ratings):
     #setting up dictionary
     rating = [i for i in reader_ratings['rating']]

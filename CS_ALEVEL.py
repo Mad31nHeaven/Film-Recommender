@@ -3,7 +3,7 @@
 # from tensorflow.keras.layers import Input, Dense, Concatenate
 # from tensorflow.keras.optimizers import Adam
 
-
+from service_availabiltiy import fetch_providers
 import tkinter as tk
 from collaborative import return_collab_filt
 from tkinter import messagebox,ttk, IntVar
@@ -11,14 +11,22 @@ import hashlib
 import pandas as pd
 import sqlite3
 import numpy as np
-
+import pycountry
 reader_movies = pd.read_csv("Movie/movies.csv")
-
+reader_links=pd.read_csv("Movie/links.csv")
 
 connection=sqlite3.connect('User_Data.db')
 cursor=connection.cursor()
+#SQL DATABASES SUBJECT TO CHANGE, UNCOMMENT BELOW COMMENTED CODE IF ANY CHANGES ARE WANTED TO BE SEEN
+
+# cursor.execute("DROP TABLE IF EXISTS login_data")
+# cursor.execute("DROP TABLE IF EXISTS rating_data")
+# cursor.execute("DROP TABLE IF EXISTS user_rated_movies")
+# cursor.execute("DROP TABLE IF EXISTS watchlist")
+# cursor.execute("DROP TABLE IF EXISTS saved_users")
+
 command1=""" CREATE TABLE IF NOT EXISTS
-login_data(user_id INTEGER PRIMARY KEY AUTOINCREMENT, USERNAME TEXT UNIQUE, PASSWORD TEXT)"""
+login_data(user_id INTEGER PRIMARY KEY AUTOINCREMENT, USERNAME TEXT UNIQUE, PASSWORD TEXT, REGION TEXT)"""
 command2="""CREATE TABLE IF NOT EXISTS
 rating_data(user_id INTEGER PRIMARY KEY, cosine_sim TEXT,FOREIGN KEY(user_id) REFERENCES login_data(user_id))"""
 
@@ -34,16 +42,11 @@ cursor.execute(command2)
 cursor.execute(command4)
 cursor.execute(command5)
 cursor.execute(command6)
-# cursor.execute("DELETE FROM rating_data")
-# cursor.execute("DELETE FROM user_rated_movies")
-# cursor.execute("DELETE FROM watchlist")
-
-
 
 cursor.execute("SELECT * FROM user_rated_movies")
 tables = cursor.fetchall()
 print("Tables:", tables)
-cursor.execute("SELECT * FROM rating_data")
+cursor.execute("SELECT * FROM login_data")
 tables = cursor.fetchall()
 print("Tables:", tables)
 connection.commit()
@@ -76,6 +79,8 @@ all_genres = np.array([convert_numpy(mid) for mid in reader_movies['movieId']])
 class FilmSuggester:
     def __init__(self, root):
         self.show=False
+        self.dropdown_movie=None
+        self.dropdown_countries=None
         self.hash = hashlib.sha256
         self.menu = root
         self.menu.title("Film/Song Suggester")
@@ -106,7 +111,7 @@ class FilmSuggester:
         self.menu.withdraw()
         self.sign_up_window=tk.Tk()
         self.sign_up_window.title('Sign Up')
-        self.center_window(self.sign_up_window,600, 400)
+        self.center_window(self.sign_up_window,600, 600)
         self.sign_up_window.config(background='#483864')
         self.signup_label = tk.Label(self.sign_up_window, text='SIGN UP')
         self.signup_label.pack(pady=10)
@@ -124,6 +129,11 @@ class FilmSuggester:
         button_return_menu.pack(pady=10)
         self.button_changeshow_signup=tk.Button(self.sign_up_window, text='Show', font=('Arial', 7, 'bold'),command=self.change_show_signup)
         self.button_changeshow_signup.pack(padx=10)
+        self.dropdown_countries=ttk.Combobox(self.sign_up_window,values=list(country.name for country in pycountry.countries))
+        self.dropdown_countries.bind('<KeyRelease>',self.search)
+        self.dropdown_countries.pack(pady=10,padx=10)
+        self.countryLabel=tk.Label(self.sign_up_window, text='Select your region', font=('arial', 10, 'bold'))
+        self.countryLabel.pack(padx=10)
     def change_show_login(self):
         if self.show==True:
             self.password_login_entry.config(show='*')
@@ -178,13 +188,19 @@ class FilmSuggester:
         self.ratings_root.withdraw()
         self.FilmsApp.deiconify()
     def search(self,event):
+        dropdown=event.widget
         entry=event.widget.get()
-        if entry!='':
-            self.dropdown_movie['values']=[movie for movie in movie_titles if entry.lower() in movie.lower() and movie not in
+        if dropdown==self.dropdown_movie:
+            if entry!='':
+                self.dropdown_movie['values']=[movie for movie in movie_titles if entry.lower() in movie.lower() and movie not in
                                            list(self.dropdown_previous_rating['values'])]
-        else:
-            self.dropdown_movie['values']=[movie for movie in movie_titles if movie not in list(self.dropdown_previous_rating['values'])]
-
+            else:
+                self.dropdown_movie['values']=[movie for movie in movie_titles if movie not in list(self.dropdown_previous_rating['values'])]
+        elif dropdown==self.dropdown_countries:
+            if entry!='':
+                self.dropdown_countries['values']=[country.name for country in pycountry.countries if entry.lower() in country.name.lower()]
+            else:
+                self.dropdown_countries['values']=[country.name for country in pycountry.countries]
     def save(self):
         rating=self.dropdown_rating.get()
         movie=self.dropdown_movie.get()
@@ -220,9 +236,9 @@ class FilmSuggester:
                 INSERT OR REPLACE INTO user_rated_movies (user_id, movie_id,rating)
                 VALUES (?, ?, ?)
             ''', (self.user_id, int(movie_id), int(rating)))
-            cursor.execute("SELECT * FROM user_rated_movies")
-            tables = cursor.fetchall()
-            print("Tables:", tables)
+            # cursor.execute("SELECT * FROM user_rated_movies")
+            # tables = cursor.fetchall()
+            # print("Tables:", tables)
             connection.commit()
             connection.close()
             current_movies=list(self.dropdown_movie['values'])
@@ -234,6 +250,7 @@ class FilmSuggester:
             current_rated=list(self.dropdown_previous_rating['values'])
             if movie not in current_rated:
                 current_rated.append(movie)
+
             self.dropdown_previous_rating['values']=current_rated
             self.dropdown_movie.set('')
             self.dropdown_previous_rating.set('')
@@ -300,17 +317,36 @@ class FilmSuggester:
         cursor.execute('SELECT rating FROM user_rated_movies WHERE user_id=?', (self.user_id,))
         rating_tuples = cursor.fetchall()
         ratings = [rating[0] for rating in rating_tuples]
-        cursor.execute('SELECT user_id FROM saved_users')
-
+        cursor.execute('SELECT region FROM login_data WHERE user_id=?', (self.user_id-620,))
+        country_tuple=cursor.fetchall()
+        self.region=country_tuple[0][0]
+        country_code=pycountry.countries.get(name=str(self.region)).alpha_2
+        print(self.region,country_code)
         if movie_ids and ratings:
             new_movieids = movie_ids
             new_userid = [self.user_id] * len(movie_ids)
             new_ratings = ratings
+
             self.movies_titles = return_collab_filt(new_userid, new_movieids, new_ratings)
-            self.my_listbox = tk.Listbox(self.ratings_root,width=50, height=10,selectmode=tk.SINGLE)
-            self.my_listbox.grid(row=0, column=2, sticky='nw')
+            self.my_listbox_titles = tk.Listbox(self.ratings_root,width=50, height=10,selectmode=tk.SINGLE)
+            self.my_listbox_titles.grid(row=0, column=2, sticky='nw')
+            self.my_listbox_availability = tk.Listbox(self.ratings_root, width=200, height=10, selectmode=tk.SINGLE)
+            self.my_listbox_availability.grid(row=0, column=3, sticky='nw')
+
             for i in range(len(self.movies_titles)):
-                self.my_listbox.insert(i, self.movies_titles[i])
+                movie_id = reader_movies[reader_movies['title'] == self.movies_titles[i]]['movieId'].iloc[0]
+                tmdb_id=reader_links[reader_links['movieId']==movie_id]['tmdbId'].iloc[0]
+                availability= fetch_providers(tmdb_id,country_code)
+                list_availability=[]
+                for category, service in availability.items():
+                    if service:
+                        service_str = ", ".join(service)
+                        list_availability.append(f"{category}: {service_str}")
+                string_availability=' | '.join(list_availability)
+                self.my_listbox_availability.insert(i, string_availability)
+
+                self.my_listbox_titles.insert(i, self.movies_titles[i])
+
         else:
             print('empty')
             self.movies_titles = []
@@ -346,16 +382,13 @@ class FilmSuggester:
         self.FilmsApp.withdraw()
         self.ratings_root=tk.Tk()
         self.ratings_root.title('Alter Ratings')
-        self.center_window(self.ratings_root,600,300)
+        self.center_window(self.ratings_root,1280,400)
         self.ratings_root.config(background='#483864')
         self.values_rated = self.get_values()
         self.values_to_rate = [movie for movie in movie_titles if movie not in self.values_rated]
         self.dropdown_movie=ttk.Combobox(self.ratings_root,values=self.values_to_rate)
         self.dropdown_movie.bind('<KeyRelease>',self.search)
         self.dropdown_movie.grid(row=0,column=0,sticky='ne')
-
-
-
         self.dropdown_rating = ttk.Combobox(self.ratings_root, values=[1,2,3,4,5])
         self.dropdown_rating.grid(row=0,column=0,pady=30,sticky='ne')
         self.dropdown_rating.bind('<KeyRelease>')
@@ -367,12 +400,12 @@ class FilmSuggester:
         self.button_remove=tk.Button(self.ratings_root,text='Remove',command=self.remove)
         self.button_remove.grid(row=0,column=1,pady=30,sticky='ne')
         self.button_comeback_frompredictions=tk.Button(self.ratings_root,text='Come Back', command=self.goBack_frompredictions)
-        self.button_comeback_frompredictions.grid(row=3,column=0,pady=30,sticky='ne')
+        self.button_comeback_frompredictions.grid(row=2,column=0,sticky='ne')
         self.button_add_to_watchlist=tk.Button(self.ratings_root, text='Add to watchlist',command=self.add_to_watchlist)
-        self.button_add_to_watchlist.grid(row=3,column=1,pady=10,sticky='ne')
-
+        self.button_add_to_watchlist.grid(row=2,column=1,sticky='ne')
         self.update_titles()
-
+        self.label_country=tk.Label(self.ratings_root,text=f'Region:{self.region}',font=('Arial',10,'bold'))
+        self.label_country.grid(row=3,column=3,sticky='nw')
 
 
     def Films(self):
@@ -449,11 +482,15 @@ class FilmSuggester:
         cursor.execute('SELECT user_id FROM saved_users WHERE username=?',(username_selected,))
         self.user_id=cursor.fetchone()[0]
         self.username=username_selected
+        cursor.execute('SELECT region FROM login_data WHERE user_id=?',(self.user_id-620,))
+        country_tuple=cursor.fetchall()
+        self.region=country_tuple[0][0]
         self.username_LABEL.configure(text=f'Username: {self.username}')
         self.retrieve_saved_users()
         self.dropdown_saved_users.configure(values=self.usernames_saved)
         connection.commit()
         connection.close()
+
     def RECOMMENDER(self):
         self.log_in_window.withdraw()
         self.recommender_APP=tk.Tk()
@@ -507,8 +544,9 @@ class FilmSuggester:
     def confirm_signup(self):
         username = self.username_signup_entry.get().replace(" ", "")
         password = self.password_signup_entry.get().replace(" ", "")
+        country=self.dropdown_countries.get()
         print(password)
-        if username == "" or password == "":
+        if username == "" or password == "" or country == "":
             tk.messagebox.showerror("Error", "You need to enter in both fields!")
         else:
             username_bytes = username.encode('utf-8')
@@ -517,11 +555,11 @@ class FilmSuggester:
             hashed_password = self.hash(password_bytes).hexdigest()
             connection = sqlite3.connect("User_Data.db")
             cursor = connection.cursor()
-
+            self.region=country
 
             try:
-                cursor.execute("INSERT INTO login_data (username, password) VALUES (?, ?)",
-                               (hashed_username, hashed_password))
+                cursor.execute("INSERT INTO login_data (username, password, region) VALUES (?, ?, ?)",
+                               (hashed_username, hashed_password, self.region))
                 connection.commit()
 
                 messagebox.showinfo("Success", "Account created successfully!")
